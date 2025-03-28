@@ -5,6 +5,7 @@
  * LICENSE file in the root directory of this source tree.
  *)
 
+open Enclosing_context
 open Name_def
 open Type
 open Reason
@@ -105,7 +106,7 @@ let resolve_annotation cx tparams_map ?(react_deep_read_only = None) anno =
   if Context.typing_mode cx = Context.CheckingMode then Node_cache.set_annotation cache anno;
   t
 
-let rec synthesizable_expression cx ?(encl_ctx = Type.NoContext) exp =
+let rec synthesizable_expression cx ?(encl_ctx = NoContext) exp =
   let open Ast.Expression in
   match exp with
   | (loc, Identifier (_, name)) -> Statement.identifier cx ~encl_ctx name loc
@@ -164,7 +165,7 @@ let mk_selector_reason_has_default cx loc = function
     (* TODO: eveyrthing after a computed prop should be optional *)
     (Type.ObjRest used_props, mk_reason RObjectPatternRestProp loc, false)
   | Selector.Computed { expression = exp; has_default } ->
-    let t = expression cx ~encl_ctx:Type.IndexContext exp in
+    let t = expression cx ~encl_ctx:IndexContext exp in
     (Type.Elem t, mk_reason (RProperty None) loc, has_default)
   | Selector.Default -> (Type.Default, mk_reason RDefaultValue loc, false)
 
@@ -198,16 +199,10 @@ let synth_arg_list ~target_loc cx (_loc, { Ast.Expression.ArgList.arguments; com
         (loc, SpreadArg t)
       )
 
-let convert_encl_ctx = function
-  | NonConditionalContext -> NoContext
-  | OtherConditionalTest -> OtherTest
-  | ComputedIndexContext -> IndexContext
-  | JsxNameContext -> JsxTitleNameContext
-
 let resolve_hint cx loc hint : Type_hint.concr_hint =
   let rec resolve_hint_node = function
     | AnnotationHint (tparams_locs, anno) -> resolve_annotation cx tparams_locs anno
-    | ValueHint (ctx, exp) -> expression cx ~encl_ctx:(convert_encl_ctx ctx) exp
+    | ValueHint (encl_ctx, exp) -> expression cx ~encl_ctx exp
     | ProvidersHint (loc, []) -> Type_env.checked_find_loc_env_write cx Env_api.OrdinaryNameLoc loc
     | ProvidersHint (l1, l2 :: rest) ->
       let t1 = Type_env.checked_find_loc_env_write cx Env_api.OrdinaryNameLoc l1 in
@@ -811,7 +806,7 @@ let rec resolve_binding cx reason loc b =
       AnyT (mk_reason RAnyImplicit loc, AnyError (Some MissingAnnotation))
   | Root (For (kind, exp)) ->
     let reason = mk_reason (RCustom "for-in") loc (*TODO: loc should be loc of loop *) in
-    let right_t = expression cx ~encl_ctx:OtherTest exp in
+    let right_t = expression cx ~encl_ctx:OtherTestContext exp in
     (match kind with
     | In ->
       TypeAssertions.assert_for_in_rhs cx right_t;
@@ -1045,12 +1040,11 @@ let resolve_type_param cx id_loc =
 
 let resolve_chain_expression cx ~cond exp =
   let cache = Context.node_cache cx in
-  let (t, _, exp) = Statement.optional_chain ~encl_ctx:(convert_encl_ctx cond) cx exp in
+  let (t, _, exp) = Statement.optional_chain ~encl_ctx:cond cx exp in
   Node_cache.set_expression cache exp;
   t
 
-let resolve_write_expression cx ~cond exp =
-  synthesizable_expression cx ~encl_ctx:(convert_encl_ctx cond) exp
+let resolve_write_expression cx ~cond exp = synthesizable_expression cx ~encl_ctx:cond exp
 
 let resolve_generator_next cx reason gen =
   let open TypeUtil in

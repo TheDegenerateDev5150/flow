@@ -5,11 +5,12 @@
  * LICENSE file in the root directory of this source tree.
  *)
 
+open Enclosing_context
 open Type
 module Ast = Flow_ast
 
 type syntactic_flags = {
-  encl_ctx: Type.enclosing_context;
+  encl_ctx: enclosing_context;
   decl: Ast.Variable.kind option;
   as_const: bool;
   frozen: Type.frozen_kind;
@@ -18,7 +19,7 @@ type syntactic_flags = {
 
 let empty_syntactic_flags =
   {
-    encl_ctx = Type.NoContext;
+    encl_ctx = NoContext;
     decl = None;
     as_const = false;
     frozen = Type.NotFrozen;
@@ -26,7 +27,7 @@ let empty_syntactic_flags =
   }
 
 let mk_syntactic_flags
-    ?(encl_ctx = Type.NoContext)
+    ?(encl_ctx = NoContext)
     ?decl
     ?(as_const = false)
     ?(frozen = Type.NotFrozen)
@@ -121,7 +122,7 @@ let aloc_contains ~outer ~inner =
   with
   | _ -> false
 
-let rec needs_generalization cx t =
+let rec is_generalization_candidate cx t =
   match t with
   | DefT (_, SingletonStrT { from_annot = false; _ })
   | DefT (_, SingletonBoolT { from_annot = false; _ })
@@ -131,12 +132,12 @@ let rec needs_generalization cx t =
   | OpenT (_, id) -> begin
     match Context.find_constraints cx id with
     | (_, Type.Constraint.FullyResolved s) ->
-      needs_generalization cx (Context.force_fully_resolved_tvar cx s)
+      is_generalization_candidate cx (Context.force_fully_resolved_tvar cx s)
     | _ -> false
   end
   | UnionT (_, rep) ->
     let members = UnionRep.members rep in
-    List.exists (needs_generalization cx) members
+    List.exists (is_generalization_candidate cx) members
   | _ -> false
 
 let loc_has_hint cx loc =
@@ -160,8 +161,8 @@ let loc_has_hint cx loc =
 
 let enclosing_context_needs_precise = function
   | NoContext -> false
-  | SwitchTest _
-  | OtherTest
+  | SwitchTestContext _
+  | OtherTestContext
   | IndexContext
   | JsxTitleNameContext
   | JsxAttrOrChildrenContext ->
@@ -217,7 +218,7 @@ let adjust_precision cx reason syntactic_flags ~precise ~general loc =
 
 let try_generalize cx syntactic_flags loc t =
   if Context.natural_inference_local_primitive_literals_partial cx then
-    if needs_generalization cx t then
+    if is_generalization_candidate cx t then
       let general () = generalize_singletons cx ~force_general:true t in
       let precise () = t in
       adjust_precision cx (TypeUtil.reason_of_t t) syntactic_flags ~precise ~general loc
